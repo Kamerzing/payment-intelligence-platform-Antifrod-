@@ -1,0 +1,26 @@
+{
+  "event_id": "00000000-0000-0000-0000-000000000201",
+  "event_type": "OPERATION_POSTED",
+  "schema_version": 1,
+  "source_id": "payment-core",
+  "source_position": "1",
+  "source_version": "1",
+  "occurred_at": "2026-10-31T00:00:01Z",
+  "attempt_id": null,
+  "decision_id": null,
+  "operation": {
+    "operation_id": "00000000-0000-0000-0000-000000000202",
+    "actor_id": "00000000-0000-0000-0000-000000000203",
+    "type": "TRANSFER",
+    "state": "POSTED",
+    "currency": "RUB",
+    "source_wallet_id": "00000000-0000-0000-0000-000000000204",
+    "target_wallet_id": "00000000-0000-0000-0000-000000000205",
+    "amount_minor": "10000",
+    "fee_minor": "100",
+    "fee_basis_points": 100,
+    "original_operation_id": null,
+    "created_at": "2026-10-31T00:00:00Z",
+    "posted_at": "2026-10-31T00:00:01Z"
+  }
+}

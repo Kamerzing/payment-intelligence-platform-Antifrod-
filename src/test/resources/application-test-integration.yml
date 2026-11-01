@@ -1,0 +1,10 @@
+# No .env import or developer database URL is used. ServiceConnection supplies the datasource.
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 3
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

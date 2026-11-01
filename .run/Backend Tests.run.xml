@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Backend Tests" type="GradleRunConfiguration" factoryName="Gradle">
+    <ExternalSystemSettings>
+      <option name="externalProjectPath" value="$PROJECT_DIR$" />
+      <option name="externalSystemIdString" value="GRADLE" />
+      <option name="taskNames"><list><option value="test" /></list></option>
+      <option name="vmOptions" value="-Xmx512m" />
+    </ExternalSystemSettings>
+    <method v="2" />
+  </configuration>
+</component>

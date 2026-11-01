@@ -1,0 +1,308 @@
+openapi: 3.1.0
+info:
+  title: Payment Intelligence analyst gateway
+  version: '1.0'
+  description: 'Через Payment Core: текущий ADMIN и общая сессия; POST требует CSRF ядра. Внутренний эквивалент /internal/v1/analyst использует отдельный bearer PIP_ANALYST_TOKEN и X-Analyst-Id от ядра. Секреты в браузер не передаются.'
+servers:
+  - url: http://127.0.0.1:8080/api/v1/admin/intelligence
+security:
+  - CoreSession: []
+paths:
+  /session:
+    get:
+      operationId: analystSession
+      responses:
+        '200':
+          description: Текущие права проверены в ядре
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [actor_id, role]
+                properties:
+                  actor_id: {type: string, format: uuid}
+                  role: {const: ADMIN}
+        '401': {$ref: '#/components/responses/Denied'}
+        '403': {$ref: '#/components/responses/Denied'}
+  /dashboard:
+    get:
+      operationId: analystDashboard
+      responses:
+        '200':
+          description: Согласованная сводка платформы
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attempts, denied, operations, open_investigations, last_event_at]
+                properties:
+                  attempts: {type: integer, minimum: 0}
+                  denied: {type: integer, minimum: 0}
+                  operations: {type: integer, minimum: 0}
+                  open_investigations: {type: integer, minimum: 0}
+                  last_event_at: {type: string, description: Пустая строка при отсутствии событий}
+        '401': {$ref: '#/components/responses/Denied'}
+        '403': {$ref: '#/components/responses/Denied'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /attempts:
+    get:
+      operationId: analystAttempts
+      parameters:
+        - {name: query, in: query, schema: {type: string, format: uuid}, description: UUID попытки/операции/участника/кошелька}
+        - {name: wallet, in: query, schema: {type: string, format: uuid}}
+        - {name: decision, in: query, schema: {type: string, enum: [ALLOW, DENY]}}
+        - {name: command_type, in: query, schema: {type: string, enum: [TRANSFER, WITHDRAWAL, CAPTURE_TRANSFER, CAPTURE_WITHDRAWAL]}}
+        - {name: from, in: query, schema: {type: string, format: date-time}, description: Включительная нижняя граница}
+        - {name: to, in: query, schema: {type: string, format: date-time}, description: Исключительная верхняя граница}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: Страница попыток с последним решением; окончательный DENY имеет приоритет
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Page'}
+                  - type: object
+                    properties:
+                      items: {type: array, items: {$ref: '#/components/schemas/Attempt'}}
+        '400': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /attempts/{id}:
+    get:
+      operationId: analystAttempt
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200':
+          description: Факты, история решений и подтверждённые события. Нет события — результат ядра неизвестен.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attempt_id, command, first_seen_at, evaluations, outcomes, related_operations, investigations]
+                properties:
+                  attempt_id: {type: string, format: uuid}
+                  command: {$ref: 'internal-v1.yaml#/components/schemas/RiskRequest'}
+                  first_seen_at: {type: string, format: date-time}
+                  evaluations:
+                    type: array
+                    items:
+                      type: object
+                      required: [decision, facts]
+                      properties:
+                        decision: {$ref: 'internal-v1.yaml#/components/schemas/RiskResponse'}
+                        facts:
+                          type: object
+                          required: [server_time, unique_attempts, distinct_recipients, account_age, command]
+                          properties:
+                            server_time: {type: string, format: date-time}
+                            unique_attempts: {type: integer}
+                            distinct_recipients: {type: integer}
+                            account_age: {type: string, description: ISO-8601 Duration}
+                            command: {$ref: 'internal-v1.yaml#/components/schemas/RiskRequest'}
+                  outcomes: {type: array, items: {$ref: 'internal-v1.yaml#/components/schemas/CoreEvent'}}
+                  related_operations: {type: array, maxItems: 20, items: {$ref: 'internal-v1.yaml#/components/schemas/CoreEvent'}}
+                  investigations: {type: array, maxItems: 1, items: {$ref: '#/components/schemas/Investigation'}}
+        '404': {$ref: '#/components/responses/Missing'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /investigations:
+    get:
+      operationId: analystInvestigations
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [OPEN, IN_REVIEW, CLOSED]}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: Очередь расследований
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Page'}
+                  - type: object
+                    properties:
+                      items: {type: array, items: {$ref: '#/components/schemas/Investigation'}}
+        '400': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /investigations/{id}:
+    get:
+      operationId: analystInvestigation
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses:
+        '200':
+          description: Карточка и неизменяемая история
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CaseDetail'}
+        '404': {$ref: '#/components/responses/Missing'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    post:
+      operationId: changeInvestigation
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+        - {name: X-CSRF-TOKEN, in: header, required: true, schema: {type: string}, description: Токен ядра из /api/v1/auth/csrf}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, status, conclusion, comment]
+              properties:
+                version: {type: integer, minimum: 1}
+                status: {type: string, enum: [OPEN, IN_REVIEW, CLOSED]}
+                conclusion: {type: [string, 'null'], enum: [SUSPICIOUS, LEGITIMATE, INSUFFICIENT_DATA, null], description: Обязателен для CLOSED, иначе null}
+                comment: {type: string, minLength: 1, maxLength: 2000}
+      responses:
+        '200':
+          description: Изменение и автор из ядра сохранены атомарно; деньги и риск не меняются
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CaseDetail'}
+        '400': {$ref: '#/components/responses/Invalid'}
+        '401': {$ref: '#/components/responses/Denied'}
+        '403': {$ref: '#/components/responses/Denied'}
+        '404': {$ref: '#/components/responses/Missing'}
+        '409':
+          description: INVESTIGATION_CHANGED; обновите карточку
+          content:
+            application/json:
+              schema: {$ref: 'internal-v1.yaml#/components/schemas/Error'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /attempts/{id}/ai-analyses:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: analystAiHistory
+      responses:
+        '200':
+          description: Десять последних отчётов, включая явное объяснение по правилам при сбое ИИ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, enabled]
+                properties:
+                  enabled: {type: boolean}
+                  items: {type: array, maxItems: 10, items: {$ref: '#/components/schemas/AiAnalysis'}}
+        '401': {$ref: '#/components/responses/Denied'}
+        '403': {$ref: '#/components/responses/Denied'}
+    post:
+      operationId: requestAiAnalysis
+      description: 'Требуется CSRF ядра. Модель работает в фоне. Повтор request_key того же автора воспроизводит задание.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [request_key]
+              properties:
+                request_key: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Сохранённое задание либо объяснение по правилам при выключенной генерации
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AiAnalysis'}
+        '409': {description: AI_ALREADY_RUNNING или AI_KEY_CONFLICT}
+        '429': {description: AI_QUEUE_FULL; допустим повтор исходного ключа}
+        '503': {$ref: '#/components/responses/Unavailable'}
+components:
+  securitySchemes:
+    CoreSession: {type: apiKey, in: cookie, name: PAYMENT_SESSION}
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, maximum: 10000, default: 0}}
+  responses:
+    Denied: {description: Отсутствует текущая сессия ADMIN либо неверный CSRF}
+    Missing: {description: Запись не найдена}
+    Invalid: {description: Неверный формат, фильтр, статус или вывод}
+    Unavailable: {description: Платформа или её БД недоступна; ядро возвращает INTELLIGENCE_UNAVAILABLE}
+  schemas:
+    AiAnalysis:
+      type: object
+      required: [id, attempt_id, actor_id, status, reason, report, metadata, created_at, finished_at]
+      properties:
+        id: {type: string, format: uuid}
+        attempt_id: {type: string, format: uuid}
+        actor_id: {type: string, format: uuid}
+        status: {type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FALLBACK]}
+        reason: {type: [string, 'null'], description: Безопасный код причины; не исходный текст модели или исключения}
+        report:
+          type: object
+          required: [source, summary, evidence, recommendations, limitations, automatic_actions]
+          properties:
+            source: {type: string, enum: [LOCAL_MODEL, RULES_FALLBACK]}
+            summary: {type: string}
+            evidence:
+              type: array
+              items:
+                type: object
+                required: [id, tool, text]
+                properties:
+                  id: {type: string, description: Существующая ссылка attempt/decision/rule/operation из снимка}
+                  tool: {type: string, enum: [read_attempt, read_rules, read_operations]}
+                  text: {type: string, description: Проверенный серверный текст факта}
+            recommendations:
+              type: array
+              maxItems: 3
+              items:
+                type: object
+                properties:
+                  code: {type: string, enum: [REVIEW_CONTEXT, COMPARE_HISTORY, REQUEST_INFORMATION]}
+                  text: {type: string}
+            limitations: {type: array, minItems: 3, maxItems: 3, items: {type: string}}
+            automatic_actions: {const: false}
+        metadata: {type: object, description: 'Версия шаблона, модель/digest/runtime, параметры, hash фактов/лицензии и инструменты для завершённой генерации'}
+        created_at: {type: string, format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+    Page:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        total: {type: integer, minimum: 0}
+        limit: {type: integer}
+        offset: {type: integer}
+    Attempt:
+      type: object
+      required: [attempt_id, command, first_seen_at, decision]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        command: {$ref: 'internal-v1.yaml#/components/schemas/RiskRequest'}
+        first_seen_at: {type: string, format: date-time}
+        decision: {$ref: 'internal-v1.yaml#/components/schemas/RiskResponse'}
+    Investigation:
+      type: object
+      required: [id, attempt_id, status, conclusion, version, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        attempt_id: {type: string, format: uuid}
+        status: {type: string, enum: [OPEN, IN_REVIEW, CLOSED]}
+        conclusion: {type: [string, 'null'], enum: [SUSPICIOUS, LEGITIMATE, INSUFFICIENT_DATA, null]}
+        version: {type: integer, minimum: 1}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CaseDetail:
+      type: object
+      required: [investigation, history]
+      properties:
+        investigation: {$ref: '#/components/schemas/Investigation'}
+        history:
+          type: array
+          items:
+            type: object
+            required: [id, investigation_id, actor_id, status, conclusion, comment, version, created_at]
+            properties:
+              id: {type: string, format: uuid}
+              investigation_id: {type: string, format: uuid}
+              actor_id: {type: [string, 'null'], format: uuid, description: null только у автоматического создания}
+              status: {type: string, enum: [OPEN, IN_REVIEW, CLOSED]}
+              conclusion: {type: [string, 'null']}
+              comment: {type: string, maxLength: 2000}
+              version: {type: integer, minimum: 1}
+              created_at: {type: string, format: date-time}

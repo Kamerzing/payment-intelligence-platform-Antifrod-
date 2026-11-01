@@ -1,0 +1,277 @@
+openapi: 3.1.0
+info:
+  title: Payment Intelligence — внутренние контракты этапов 3–4
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:8081
+paths:
+  /internal/v1/risk/evaluations:
+    post:
+      operationId: evaluateRisk
+      summary: Оценить валидную нормализованную расходную попытку
+      security: [{CoreBearer: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RiskRequest'}
+            example:
+              attempt_id: 00000000-0000-0000-0000-000000000101
+              command_type: TRANSFER
+              initiator_id: 00000000-0000-0000-0000-000000000102
+              source_wallet_id: 00000000-0000-0000-0000-000000000103
+              target_wallet_id: 00000000-0000-0000-0000-000000000104
+              hold_id: null
+              currency: RUB
+              amount_minor: '10000000'
+              fee_minor: '100000'
+              fee_basis_points: 100
+              user_created_at: '2026-01-01T00:00:00Z'
+      responses:
+        '200':
+          description: ALLOW или DENY; это не результат проведения денежной команды
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RiskResponse'}
+        '400': {$ref: '#/components/responses/Invalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409':
+          description: ATTEMPT_CONFLICT — прежний ID с другими параметрами
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '503':
+          description: SERVICE_UNAVAILABLE, RISK_CONTEXT_UNAVAILABLE или RISK_CONFIGURATION_CONFLICT; разрешения нет
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+  /internal/v1/events:
+    post:
+      operationId: ingestCoreEvent
+      summary: Надёжно сохранить событие и обновить витрину
+      security: [{CoreBearer: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CoreEvent'}
+      responses:
+        '200':
+          description: Подтверждение после commit
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [event_id, status]
+                properties:
+                  event_id: {type: string, format: uuid}
+                  status: {type: string, enum: [ACCEPTED, DUPLICATE]}
+        '400': {$ref: '#/components/responses/Invalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409':
+          description: EVENT_CONFLICT — идентификатор, позиция или версия заняты другим содержимым
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /internal/v1/exports:
+    servers: [{url: 'http://127.0.0.1:8080'}]
+    post:
+      operationId: createCoreExport
+      summary: Материализовать согласованный снимок и курсор в Java-ядре
+      security: [{ExportBearer: []}]
+      responses:
+        '200':
+          description: Сохранённый снимок
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ExportManifest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /internal/v1/exports/{id}:
+    servers: [{url: 'http://127.0.0.1:8080'}]
+    get:
+      operationId: readCoreExportPage
+      security: [{ExportBearer: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 100}
+        - name: after_operation_id
+          in: query
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Детерминированная страница по UUID операции; исходный cursor не меняется
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/ExportManifest'}
+                  - type: object
+                    required: [items, next_after_operation_id, complete]
+                    properties:
+                      items:
+                        type: array
+                        maxItems: 100
+                        items: {$ref: '#/components/schemas/CoreEvent'}
+                      next_after_operation_id: {type: [string, 'null'], format: uuid}
+                      complete: {type: boolean}
+        '400': {$ref: '#/components/responses/Invalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404':
+          description: EXPORT_NOT_FOUND
+components:
+  securitySchemes:
+    CoreBearer: {type: http, scheme: bearer, description: 'PIP_CORE_TOKEN; cookie не принимается'}
+    ExportBearer: {type: http, scheme: bearer, description: 'Отдельный PIP_EXPORT_TOKEN ядра'}
+  responses:
+    Invalid:
+      description: INVALID_REQUEST — неверный формат или обязательный контекст
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unauthorized:
+      description: UNAUTHORIZED — отсутствует или неверен межсервисный секрет
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unavailable:
+      description: SERVICE_UNAVAILABLE — надёжное сохранение не подтверждено; повторите тот же запрос
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    PositiveMinor:
+      type: string
+      pattern: '^[1-9][0-9]{0,18}$'
+      maxLength: 19
+      description: Положительные целые копейки до 9223372036854775807; сумма с комиссией также в пределах long
+    NonnegativeMinor:
+      type: string
+      pattern: '^(0|[1-9][0-9]{0,18})$'
+      maxLength: 19
+      description: Целые копейки от 0 до 9223372036854775807
+    RiskRequest:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, command_type, initiator_id, source_wallet_id, currency, amount_minor, fee_minor, fee_basis_points, user_created_at]
+      description: Получатель требуется только для TRANSFER/CAPTURE_TRANSFER; hold_id только для CAPTURE. Владение и права проверяет ядро до вызова.
+      allOf:
+        - if:
+            properties:
+              command_type: {enum: [TRANSFER, CAPTURE_TRANSFER]}
+          then:
+            required: [target_wallet_id]
+            properties:
+              target_wallet_id: {type: string, format: uuid}
+          else:
+            properties:
+              target_wallet_id: {type: 'null'}
+        - if:
+            properties:
+              command_type: {enum: [CAPTURE_TRANSFER, CAPTURE_WITHDRAWAL]}
+          then:
+            required: [hold_id]
+            properties:
+              hold_id: {type: string, format: uuid}
+          else:
+            properties:
+              hold_id: {type: 'null'}
+      properties:
+        attempt_id: {type: string, format: uuid}
+        command_type: {type: string, enum: [TRANSFER, WITHDRAWAL, CAPTURE_TRANSFER, CAPTURE_WITHDRAWAL]}
+        initiator_id: {type: string, format: uuid}
+        source_wallet_id: {type: string, format: uuid}
+        target_wallet_id: {type: [string, 'null'], format: uuid}
+        hold_id: {type: [string, 'null'], format: uuid}
+        currency: {type: string, const: RUB}
+        amount_minor: {$ref: '#/components/schemas/PositiveMinor'}
+        fee_minor: {$ref: '#/components/schemas/NonnegativeMinor'}
+        fee_basis_points: {type: integer, minimum: 0, maximum: 10000}
+        user_created_at: {type: string, format: date-time, description: Доверенная дата из БД ядра}
+    RiskResponse:
+      type: object
+      required: [attempt_id, decision_id, decision, score, triggered_rules, rule_set_version, command_hash, evaluated_at, expires_at]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        decision_id: {type: string, format: uuid}
+        decision: {type: string, enum: [ALLOW, DENY]}
+        score: {type: integer, minimum: 0, maximum: 100}
+        triggered_rules:
+          type: array
+          items: {type: string, enum: [HIGH_AMOUNT, HIGH_VELOCITY, RECIPIENT_FANOUT, NEW_ACCOUNT_LARGE_AMOUNT]}
+        rule_set_version: {type: string, maxLength: 64}
+        command_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        evaluated_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time, description: ALLOW истекает; окончательный DENY имеет null}
+    CoreEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, event_type, schema_version, source_id, source_position, source_version, occurred_at, operation]
+      allOf:
+        - if:
+            properties: {event_type: {const: RISK_REJECTED}}
+          then:
+            required: [attempt_id, decision_id, rejected_command]
+            properties:
+              operation: {type: 'null'}
+              attempt_id: {type: string, format: uuid}
+              decision_id: {type: string, format: uuid}
+              source_version: {const: '1'}
+          else:
+            properties:
+              operation: {$ref: '#/components/schemas/Operation'}
+            not: {required: [rejected_command]}
+      properties:
+        event_id: {type: string, format: uuid}
+        event_type: {type: string, enum: [OPERATION_POSTED, RISK_REJECTED]}
+        schema_version: {type: integer, const: 1}
+        source_id: {type: string, const: payment-core}
+        source_position: {$ref: '#/components/schemas/PositiveMinor'}
+        source_version: {$ref: '#/components/schemas/PositiveMinor'}
+        occurred_at: {type: string, format: date-time}
+        attempt_id: {type: [string, 'null'], format: uuid}
+        decision_id: {type: [string, 'null'], format: uuid}
+        operation:
+          oneOf:
+            - {$ref: '#/components/schemas/Operation'}
+            - {type: 'null'}
+        rejected_command: {$ref: '#/components/schemas/RiskRequest'}
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [operation_id, actor_id, type, state, currency, amount_minor, fee_minor, fee_basis_points, created_at, posted_at]
+      properties:
+        operation_id: {type: string, format: uuid}
+        actor_id: {type: string, format: uuid}
+        type: {type: string, enum: [DEPOSIT, TRANSFER, WITHDRAWAL, REVERSAL, HOLD_CREATE, HOLD_CANCEL, HOLD_EXPIRE, CAPTURE_TRANSFER, CAPTURE_WITHDRAWAL]}
+        state: {type: string, const: POSTED}
+        currency: {type: string, const: RUB}
+        source_wallet_id: {type: [string, 'null'], format: uuid}
+        target_wallet_id: {type: [string, 'null'], format: uuid}
+        amount_minor: {$ref: '#/components/schemas/PositiveMinor'}
+        fee_minor: {$ref: '#/components/schemas/NonnegativeMinor'}
+        fee_basis_points: {type: integer, minimum: 0, maximum: 10000}
+        original_operation_id: {type: [string, 'null'], format: uuid}
+        created_at: {type: string, format: date-time}
+        posted_at: {type: string, format: date-time}
+    ExportManifest:
+      type: object
+      required: [export_id, source_id, cursor]
+      properties:
+        export_id: {type: string, format: uuid}
+        source_id: {type: string, const: payment-core}
+        cursor: {$ref: '#/components/schemas/NonnegativeMinor'}
+    Error:
+      type: object
+      required: [status, code, message, request_id, timestamp]
+      properties:
+        status: {type: integer}
+        code: {type: string}
+        message: {type: string}
+        request_id: {type: string}
+        timestamp: {type: string, format: date-time}

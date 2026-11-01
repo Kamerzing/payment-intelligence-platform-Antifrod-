@@ -1,0 +1,95 @@
+spring:
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  application:
+    name: payment-intelligence-platform
+  sql:
+    init:
+      mode: never
+  datasource:
+    url: ${PIP_DB_URL}
+    username: ${PIP_DB_USER}
+    password: ${PIP_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 3000
+  flyway:
+    enabled: true
+    clean-disabled: true
+    validate-on-migrate: true
+    baseline-on-migrate: false
+
+server:
+  address: 127.0.0.1
+  port: ${PIP_APP_PORT:8081}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+    include-exception: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+logging:
+  exception-conversion-word: "%nopex"
+  structured:
+    format:
+      console: ecs
+    json:
+      exclude:
+        - error.stack_trace
+        - error.message
+
+pip:
+  ai:
+    enabled: ${PIP_AI_ENABLED:false}
+    url: http://127.0.0.1:11435
+    digest: ${PIP_AI_MODEL_DIGEST:}
+    runtime-version: ${PIP_AI_RUNTIME_VERSION:}
+    timeout-seconds: 180
+    queue-capacity: 8
+    core-url: ${PIP_CORE_URL:http://127.0.0.1:8080}
+    analyst-token: ${PIP_ANALYST_TOKEN:}
+  integration:
+    core-token: ${PIP_CORE_TOKEN:}
+    analyst-token: ${PIP_ANALYST_TOKEN:}
+    source-id: payment-core
+  risk:
+    rules:
+      version: pilot-v1
+      high-amount-minor: 10000000
+      high-amount-points: 70
+      velocity-limit: 5
+      velocity-window: 60s
+      velocity-points: 80
+      recipient-limit: 3
+      recipient-window: 10m
+      recipient-points: 40
+      new-account-age: 24h
+      new-account-amount-minor: 2500000
+      new-account-points: 30
+      deny-score: 70
+      allow-ttl: 1s
